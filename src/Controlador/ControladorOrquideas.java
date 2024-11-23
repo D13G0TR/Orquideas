@@ -1,8 +1,10 @@
 package Controlador;
 
 import Modelo.BaseDeDatos;
-import Modelo.Orquidea;
 import Vista.VistaPrincipal;
+
+import javax.swing.table.DefaultTableModel;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
 public class ControladorOrquideas {
@@ -13,63 +15,158 @@ public class ControladorOrquideas {
         this.db = db;
         this.vista = vista;
 
-        // Asignar eventos a los botones
-        vista.btnGuardar.addActionListener(e -> guardarDatos());
-        vista.btnMostrar.addActionListener(e -> mostrarRegistros());
+        // Vincular eventos
+        vista.btnGuardarPlanta.addActionListener(e -> guardarPlanta());
+        vista.btnGuardarRiego.addActionListener(e -> programarRiego());
+
+        configurarHorasRiego();
+        
+        cargarPlantasComboBox();
+        
+        // Cargar los datos en la tabla al iniciar
+        cargarTablaPlantas();
     }
 
-    // Método para guardar datos ingresados en la base de datos
-    private void guardarDatos() {
+    private void guardarPlanta() {
         try {
-            // Obtener datos desde la vista
-            String nombre = vista.txtNombre.getText();
-            double humedad = Double.parseDouble(vista.txtHumedad.getText());
-            double temperatura = Double.parseDouble(vista.txtTemperatura.getText());
+            String nombre = vista.txtNombrePlanta.getText();
 
-            // Crear objeto Orquidea
-            Orquidea orquidea = new Orquidea(nombre, humedad, temperatura);
-
-            // Guardar en la base de datos
-            db.guardarOrquidea(orquidea.getNombre(), orquidea.getHumedad(), orquidea.getTemperatura());
-
-            // Mostrar mensaje de éxito
-            vista.mostrarMensaje("Datos guardados correctamente.");
-            
-            // Limpiar campos
-            limpiarCampos();
-        } catch (Exception e) {
-            vista.mostrarMensaje("Error al guardar datos: " + e.getMessage());
-        }
-    }
-
-    // Método para mostrar registros almacenados en la base de datos
-    private void mostrarRegistros() {
-        try {
-            // Obtener registros desde la base de datos
-            ResultSet rs = db.obtenerRegistros();
-
-            // Construir una cadena con los datos obtenidos
-            StringBuilder registros = new StringBuilder();
-            while (rs.next()) {
-                registros.append("ID: ").append(rs.getInt("id"))
-                         .append(", Nombre: ").append(rs.getString("nombre"))
-                         .append(", Humedad: ").append(rs.getDouble("humedad"))
-                         .append(", Temperatura: ").append(rs.getDouble("temperatura"))
-                         .append(", Fecha: ").append(rs.getTimestamp("fecha_registro"))
-                         .append("\n");
+            if (nombre.isEmpty()) {
+                vista.mostrarMensaje("El nombre de la planta no puede estar vacío.");
+                return;
             }
 
-            // Mostrar los registros en el JTextArea
-            vista.txtAreaRegistro.setText(registros.toString());
+            db.guardarNombrePlanta(nombre);
+            vista.mostrarMensaje("Planta guardada correctamente.");
+            vista.txtNombrePlanta.setText("");
+
+            // Actualizar la tabla automáticamente después de guardar
+            cargarTablaPlantas();
         } catch (Exception e) {
-            vista.mostrarMensaje("Error al mostrar registros: " + e.getMessage());
+            vista.mostrarMensaje("Error al guardar la planta: " + e.getMessage());
         }
     }
 
-    // Método para limpiar los campos de texto después de guardar datos
-    private void limpiarCampos() {
-        vista.txtNombre.setText("");
-        vista.txtHumedad.setText("");
-        vista.txtTemperatura.setText("");
+    private void cargarTablaPlantas() {
+        try {
+            // Obtener los datos desde la base de datos
+            var plantas = db.obtenerPlantas();
+
+            // Modelo de la tabla
+            DefaultTableModel modelo = new DefaultTableModel();
+            modelo.addColumn("ID");
+            modelo.addColumn("Nombre");
+            modelo.addColumn("Fecha de Riego");
+            modelo.addColumn("Hora de Riego");
+
+            // Agregar filas al modelo
+            for (String[] planta : plantas) {
+                modelo.addRow(planta);
+            }
+
+            // Asignar el modelo a la tabla
+            vista.tblPlantas.setModel(modelo);
+        } catch (Exception e) {
+            vista.mostrarMensaje("Error al cargar los datos: " + e.getMessage());
+        }
+    }
+
+    private void programarRiego() {
+        try {
+            // Obtener la planta seleccionada desde el ComboBox
+            String plantaSeleccionada = (String) vista.cmbPlantas.getSelectedItem();
+            if (plantaSeleccionada == null) {
+                vista.mostrarMensaje("Seleccione una planta.");
+                return;
+            }
+
+            // Obtener el ID de la planta desde el nombre
+            int plantaId = obtenerIdPlanta(plantaSeleccionada);
+
+            // Obtener la fecha seleccionada desde el JDateChooser
+            java.util.Date fechaSeleccionada = vista.calendarioRiego.getDate();
+            if (fechaSeleccionada == null) {
+                vista.mostrarMensaje("Seleccione una fecha.");
+                return;
+            }
+            java.sql.Date fechaSql = new java.sql.Date(fechaSeleccionada.getTime());
+
+            // Obtener la hora seleccionada desde el ComboBox
+            String horaTexto = (String) vista.cmbHoraRiego.getSelectedItem();
+            if (horaTexto == null) {
+                vista.mostrarMensaje("Seleccione una hora.");
+                return;
+            }
+            java.sql.Time horaSql = java.sql.Time.valueOf(horaTexto + ":00");
+
+            // Guardar en la base de datos
+            db.guardarRiego(plantaId, fechaSql, horaSql);
+            vista.mostrarMensaje("Riego programado correctamente.");
+
+            // Actualizar la tabla automáticamente después de guardar
+            cargarTablaPlantas();
+        } catch (Exception e) {
+            vista.mostrarMensaje("Error al programar el riego: " + e.getMessage());
+        }
+    }
+
+    private int obtenerIdPlanta(String nombrePlanta) throws Exception {
+        // Consulta SQL para obtener el ID de la planta
+        String query = "SELECT id FROM orquidea WHERE nombre = ?";
+
+        // Preparar la consulta
+        PreparedStatement stmt = db.getConexion().prepareStatement(query);
+        stmt.setString(1, nombrePlanta);
+
+        // Ejecutar la consulta
+        ResultSet rs = stmt.executeQuery();
+
+        // Si hay un resultado, devolver el ID
+        if (rs.next()) {
+            return rs.getInt("id");
+        } else {
+            throw new Exception("Planta no encontrada.");
+        }
+    }
+
+    private void configurarHorasRiego() {
+        vista.cmbHoraRiego.addItem("08:00");
+        vista.cmbHoraRiego.addItem("08:30");
+        vista.cmbHoraRiego.addItem("09:00");
+        vista.cmbHoraRiego.addItem("09:30");
+        vista.cmbHoraRiego.addItem("10:00");
+        vista.cmbHoraRiego.addItem("10:30");
+        vista.cmbHoraRiego.addItem("11:00");
+        vista.cmbHoraRiego.addItem("11:30");
+        vista.cmbHoraRiego.addItem("12:00");
+        vista.cmbHoraRiego.addItem("12:30");
+        vista.cmbHoraRiego.addItem("13:00");
+        vista.cmbHoraRiego.addItem("13:30");
+        vista.cmbHoraRiego.addItem("14:00");
+        vista.cmbHoraRiego.addItem("14:30");
+        vista.cmbHoraRiego.addItem("15:00");
+        vista.cmbHoraRiego.addItem("15:30");
+        vista.cmbHoraRiego.addItem("16:00");
+        vista.cmbHoraRiego.addItem("16:30");
+        vista.cmbHoraRiego.addItem("17:00");
+        vista.cmbHoraRiego.addItem("17:30");
+        vista.cmbHoraRiego.addItem("18:00");
+    }
+
+    private void cargarPlantasComboBox() {
+        try {
+            // Obtener la lista de plantas desde la base de datos
+            var plantas = db.obtenerPlantas();
+
+            // Limpiar el ComboBox antes de agregar nuevos elementos
+            vista.cmbPlantas.removeAllItems();
+
+            // Llenar el ComboBox con los nombres de las plantas
+            for (String[] planta : plantas) {
+                vista.cmbPlantas.addItem(planta[1]); // Agrega solo el nombre de la planta
+            }
+        } catch (Exception e) {
+            vista.mostrarMensaje("Error al cargar las plantas: " + e.getMessage());
+        }
     }
 }
